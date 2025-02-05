@@ -16,6 +16,8 @@ public class MovementController : MonoBehaviour
     public float Acceleration = 70f;
     public float Friction = 7.6f;
 
+
+
 	private Vector3 currentVelocity;
 	public float distanceToDestination {get; set;}
 	
@@ -45,6 +47,7 @@ public class MovementController : MonoBehaviour
 	private TrailRenderer trail;
 
 	private bool hasTrail = false;
+    private Vector2 overridingMultiplyForceAndFriction = Vector2.zero;
     protected virtual void Awake()
 	{
 		trail = GetComponentInChildren<TrailRenderer>();
@@ -109,8 +112,19 @@ public class MovementController : MonoBehaviour
 	/// <param name="lockVertical">If true, ignores vertical movement, useful for ground-based movement. Disable if flying.</param>
 	/// <returns>True when within arrivalThreshold of target</returns>
 	public bool ApplyMovementForceTowards(Vector3 targetPosition, float moveForce, float arrivalThreshold, bool lockVertical = true)
-	{
-		Vector3 moveDirection = (targetPosition - transform.position);
+    {
+        Vector3 moveDirection = (targetPosition - transform.position);
+
+		// Handle slipperiness possibility with override multiplier.
+        if (overridingMultiplyForceAndFriction.magnitude > 0.0001f) {
+			if (overridingMultiplyForceAndFriction.y < 0.6f) {
+				var useVelocity = rb.velocity.magnitude > 0.001f ? rb.velocity : moveDirection;
+				var directionAlignCheck = useVelocity.dotProduct(moveDirection);
+				moveForce *= (1.2f - overridingMultiplyForceAndFriction.x) * Mathf.Clamp(1.0f - ((directionAlignCheck + 1.0f) * 0.5f), 0.38f, 1.0f);
+			} else
+				moveForce *= overridingMultiplyForceAndFriction.x;
+		}
+
 		if(lockVertical)
 			moveDirection.y = 0;
 		
@@ -143,7 +157,7 @@ public class MovementController : MonoBehaviour
 	/// <param name="targetDirection">Direction or position to face towards</param>
 	/// <param name="rotationSpeed">How quickly to rotate towards the target direction</param>
 	/// <param name="lockVertical">If true, only considers horizontal rotation</param>
-	public void AlignWithDirection(Vector3 targetDirection, float rotationSpeed, bool lockVertical)
+	public void AlignWithDirection(Vector3 targetDirection, float rotationSpeed, bool lockVertical, bool force = false)
 	{
 		Vector3 currentPos = transform.position;
 		if(lockVertical) {
@@ -151,13 +165,13 @@ public class MovementController : MonoBehaviour
 			targetDirection.y = 0;
 		}
 		
-		Vector3 directionToTarget = targetDirection - currentPos;
-		ApplyRotation(directionToTarget, rotationSpeed);
+		Vector3 directionToTarget = targetDirection.magnitude < 3 ? targetDirection : (targetDirection - currentPos);
+		ApplyRotation(directionToTarget, rotationSpeed, force);
 	}
 	
-	private void ApplyRotation(Vector3 direction, float rotationSpeed)
+	private void ApplyRotation(Vector3 direction, float rotationSpeed, bool force = false)
 	{
-        if (!enabled)
+        if (!enabled && !force)
             return;
         if (direction.magnitude > 0.1f && Mathf.Abs(rotationSpeed) > 0.01f)
 		{
@@ -165,7 +179,7 @@ public class MovementController : MonoBehaviour
 			Quaternion newRotation = Quaternion.Slerp(
 				transform.rotation, 
 				targetRotation, 
-				direction.magnitude * rotationSpeed * Time.deltaTime
+				direction.magnitude * (Mathf.Clamp(rotationSpeed - rb.angularDrag * 5f, rotationSpeed*0.4f,rotationSpeed)) * Time.deltaTime
 			);
 			rb.MoveRotation(newRotation);
 		}
@@ -186,16 +200,18 @@ public class MovementController : MonoBehaviour
     /// <param name="speedLimit">Maximum allowed velocity magnitude</param>
     /// <param name="lockVertical">If true, only affects horizontal velocity</param>
     public void ApplyVelocityControl(float friction, float speedLimit, bool lockVertical)
-	{	
+	{
+		if (overridingMultiplyForceAndFriction.magnitude > 0.0001f)
+			friction *= overridingMultiplyForceAndFriction.y;
 		currentVelocity = rb.velocity.SetY(lockVertical ? 0 : rb.velocity.y);
 		if (trail != null)
 			trail.emitting = currentVelocity.magnitude > 0.5f;
 		if (currentVelocity.magnitude > 0) {
-            ApplyFrictionForce(friction);
+            ApplyFrictionForce(friction + (rb.drag * 10.0f));
             currentVelocity = rb.velocity.SetY(lockVertical ? 0 : rb.velocity.y);
 
 			if (currentVelocity.magnitude > speedLimit) {
-				ApplyFrictionForce(friction);
+				ApplyFrictionForce(friction + (rb.drag * 10.0f));
 			}
         }
     }
@@ -203,6 +219,17 @@ public class MovementController : MonoBehaviour
     private void ApplyFrictionForce(float friction)
     {
         rb.AddForce((currentVelocity * -1) * friction * Time.deltaTime, ForceMode.VelocityChange);
+    }
+
+
+    public void ApplyCustomSquashEffect(Vector3 customSquash)
+    {
+        if (!animator) return;
+        animator.transform.localScale = new Vector3(
+            customSquash.x * baseModelScale.x,  // Horizontal squeeze
+            customSquash.y * baseModelScale.y,   // Vertical stretch
+            customSquash.z * baseModelScale.z   // Horizontal squeeze
+        );
     }
 
     public void ApplyJumpSquashEffect()
@@ -226,4 +253,9 @@ public class MovementController : MonoBehaviour
             SquashEffect.z * baseModelScale.z   // Horizontal stretch
         );
     }
+
+	public void SetOverridingForceAndFriction(Vector2 _overridingValues)
+	{
+		overridingMultiplyForceAndFriction = _overridingValues;
+	}
 }

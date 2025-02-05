@@ -5,6 +5,7 @@ using UnityEditor;
 using System;
 using System.IO;
 using System.Reflection;
+using PlasticGui;
 
 [CustomEditor(typeof(WikiPage), true)]
 [InitializeOnLoad]
@@ -18,14 +19,41 @@ public class ReadmeEditor : Editor
 
     WikiPage currentPage;
     Vector2 scrollPosition;
-
+    bool currentlyEditing = false;
+    string currentMDEditing = "";
+    bool changedMDEditing = false;
     private MarkdownRenderer markdownRenderer;
+
+    private SerializedProperty titleProperty;
+    protected SerializedProperty markdownContent;
+    private SerializedProperty iconProperty;
 
     static ReadmeEditor()
     {
         EditorApplication.delayCall += SelectReadmeAutomatically;
     }
 
+    private static Color _DefaultBackgroundColor;
+    public static Color DefaultBackgroundColor
+    {
+        get
+        {
+            if (_DefaultBackgroundColor.a == 0)
+            {
+                var method = typeof(EditorGUIUtility)
+                    .GetMethod("GetDefaultBackgroundColor", BindingFlags.NonPublic | BindingFlags.Static);
+                _DefaultBackgroundColor = (Color)method.Invoke(null, null);
+            }
+            return _DefaultBackgroundColor;
+        }
+    }
+
+    private void OnEnable()
+    {
+        titleProperty = serializedObject.FindProperty("title");
+        iconProperty = serializedObject.FindProperty("icon");
+        markdownContent = serializedObject.FindProperty("markdownContent");
+    }
     static void RemoveTutorial()
     {
         if (EditorUtility.DisplayDialog("Remove Readme Assets",
@@ -99,60 +127,159 @@ public class ReadmeEditor : Editor
 
     protected override void OnHeaderGUI()
     {
+        showingSpecialBackgroundColor = false;
         currentPage = (WikiPage)target;
         Init();
 
         var iconWidth = Mathf.Min(EditorGUIUtility.currentViewWidth / 3f - 20f, 128f);
 
-        GUILayout.BeginHorizontal("In BigTitle");
-        {
-            if (currentPage.icon != null)
-            {
-                GUILayout.Space(k_Space);
-                GUILayout.Label(currentPage.icon, GUILayout.Width(iconWidth), GUILayout.Height(iconWidth));
-            }
-            GUILayout.Space(k_Space);
-            GUILayout.BeginVertical();
-            {
-                GUILayout.FlexibleSpace();
-                GUILayout.Label(currentPage.title, TitleStyle);
-                GUILayout.FlexibleSpace();
-            }
-            GUILayout.EndVertical();
-            GUILayout.FlexibleSpace();
-        }
+        GUILayout.BeginVertical("Big title");
+
+        bool shouldShowHeader = !currentlyEditing && (currentPage.icon != null || (currentPage.title !=  null && !string.IsNullOrEmpty(currentPage.title)));
+        GUILayout.BeginHorizontal("ButtonsTop");
+        GUILayout.FlexibleSpace();
         // Navigation breadcrumb if this is a sub-page
-        if (!(target is Readme))
+        if (!(target is Readme) && !currentlyEditing)
         {
-            if (GUILayout.Button("← Home", ButtonStyle))
+            if (GUILayout.Button("← Home", EditorStyles.miniButton, GUILayout.Width(60)))
             {
                 SelectReadme();
             }
             GUILayout.Space(k_Space);
         }
-        if (GUILayout.Button("Edit", EditorStyles.miniButton, GUILayout.Width(60)))
-        {
+        if (currentlyEditing && GUILayout.Button("Open .md", EditorStyles.miniButton, GUILayout.Width(80))) {
             string assetPath = AssetDatabase.GetAssetPath(target);
             string mdPath = Path.ChangeExtension(assetPath, ".md");
-            if (File.Exists(mdPath))
-            {
-                AssetDatabase.OpenAsset(AssetDatabase.LoadAssetAtPath<TextAsset>(mdPath));
-            } else
-            {
-                File.WriteAllText(mdPath, "# " + ((WikiPage)target).title + "\n\nAdd your content here...");
-                AssetDatabase.Refresh();
+            if (File.Exists(mdPath)) {
                 AssetDatabase.OpenAsset(AssetDatabase.LoadAssetAtPath<TextAsset>(mdPath));
             }
         }
-
+        if (GUILayout.Button(currentlyEditing ? "Done" : "Edit", EditorStyles.miniButton, GUILayout.Width(60)))
+        {
+            currentlyEditing = !currentlyEditing;
+            if (currentlyEditing)
+            {
+                string assetPath = AssetDatabase.GetAssetPath(target);
+                string mdPath = Path.ChangeExtension(assetPath, ".md");
+             
+                if (File.Exists(mdPath))
+                {
+                    currentMDEditing = File.ReadAllText(mdPath);
+                    changedMDEditing = false;
+                }
+                else
+                {
+                    File.WriteAllText(mdPath, "# " + ((WikiPage)target).title + "\n\nAdd your content here...");
+                    AssetDatabase.Refresh();
+                    AssetDatabase.OpenAsset(AssetDatabase.LoadAssetAtPath<TextAsset>(mdPath));
+                }
+            } else
+            {
+                if (changedMDEditing)
+                {
+                    string assetPath = AssetDatabase.GetAssetPath(target);
+                    string mdPath = Path.ChangeExtension(assetPath, ".md");
+                    File.WriteAllText(mdPath, currentMDEditing);
+                    markdownContent.stringValue = null;
+                    serializedObject.ApplyModifiedProperties();
+                }
+            }
+        }
         GUILayout.EndHorizontal();
+
+        if (currentlyEditing)
+        {
+            EditorGUILayout.BeginVertical();
+            EditorGUILayout.PropertyField(titleProperty, new GUIContent("Title"));
+            EditorGUILayout.PropertyField(iconProperty, new GUIContent("Icon"));
+            EditorGUILayout.EndVertical();
+            serializedObject.ApplyModifiedProperties();
+            //currentPage.title = GUILayout.TextField(currentPage.title, TitleStyle);
+        }
+        if (shouldShowHeader)
+        {
+            GUILayout.BeginHorizontal("In BigTitle");
+            {
+                if (!currentlyEditing)
+                {
+                    if (currentPage.icon != null)
+                    {
+                        GUILayout.Space(k_Space);
+                        GUILayout.Label(currentPage.icon, GUILayout.Width(iconWidth), GUILayout.Height(iconWidth));
+                    }
+                    GUILayout.Space(k_Space);
+                }
+                GUILayout.BeginVertical();
+                { 
+                    if (!currentlyEditing)
+                    {
+                        GUILayout.FlexibleSpace();
+                        GUILayout.Label(currentPage.title, TitleStyle);
+                        GUILayout.FlexibleSpace();
+                    }
+                }
+                GUILayout.EndVertical();
+                if (!currentlyEditing)
+                    GUILayout.FlexibleSpace();
+            }
+            GUILayout.EndHorizontal();
+        }
+        GUILayout.EndVertical();
+
+        showingSpecialBackgroundColor = false;
     }
 
+    Color originalBackgroundColor;
+    bool _showingSpecialBackgroundColor = false;
+    public bool showingSpecialBackgroundColor { get => _showingSpecialBackgroundColor; set
+        {
+            if (_showingSpecialBackgroundColor != value)
+            {
+                if (value) {
+                    originalBackgroundColor = GUI.backgroundColor;
+                    GUI.backgroundColor = DefaultBackgroundColor;
+                } else
+                {
+                    GUI.backgroundColor = originalBackgroundColor;
+                }
+                _showingSpecialBackgroundColor = value;
+            }
+        }
+    }
+
+    public void UpdateMarkdownFile(string newFileContents)
+    {
+        dirtyFileContent = newFileContents;
+    }
+
+    string dirtyFileContent = "";
     public override void OnInspectorGUI()
     {
         var wikiPage = (WikiPage)target;
+        showingSpecialBackgroundColor = true;
+        
         if (markdownRenderer == null) markdownRenderer = new MarkdownRenderer();
+        markdownRenderer.SetReadmeEditor(this);
         Init();
+
+        if (currentlyEditing)
+        {
+            scrollPosition = EditorGUILayout.BeginScrollView(scrollPosition);
+            EditorGUILayout.BeginVertical();
+            this.markdownContent.stringValue = EditorGUILayout.TextArea(currentMDEditing, GUILayout.ExpandHeight(true), GUILayout.MinHeight(450f));
+
+            EditorGUILayout.EndVertical();
+
+            EditorGUILayout.EndScrollView();
+            if (this.markdownContent.stringValue != currentMDEditing)
+            {
+                currentMDEditing = this.markdownContent.stringValue;
+                changedMDEditing = true;
+                serializedObject.ApplyModifiedProperties();
+            }
+            
+            return;
+        }
 
         if (wikiPage.sections != null && wikiPage.sections.Length > 0)
             foreach (var section in wikiPage.sections)
@@ -230,10 +357,19 @@ public class ReadmeEditor : Editor
         EditorGUILayout.EndScrollView();
         EditorGUILayout.EndVertical();
 
+
+        showingSpecialBackgroundColor = false;
         // Handle repaint requests from markdown renderer
         if (GUI.changed)
         {
             Repaint();
+            if (!string.IsNullOrEmpty(dirtyFileContent))
+            {
+                string getAssetPath = AssetDatabase.GetAssetPath(wikiPage);
+                string getMdPath = Path.ChangeExtension(assetPath, ".md");
+                File.WriteAllText(getMdPath, dirtyFileContent);
+                dirtyFileContent = "";
+            }
         }
     }
 
